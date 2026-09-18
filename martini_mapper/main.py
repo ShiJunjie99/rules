@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -18,6 +19,23 @@ from .setup_mapping import get_atom_properties, connectivity_matrix
 from .martini_3_dictionary import get_m3_dict
 from .mapping_scheme import map_molecule, parse_smiles
 from .algorithm import map_martini_beads
+
+
+def _load_previous_mapping(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise MappingError(f"Could not read previous mapping JSON {path}: {exc}") from exc
+
+
+def _parse_reaction_atoms(value: str) -> list[int]:
+    try:
+        atoms = [int(item.strip()) for item in value.split(",") if item.strip()]
+    except ValueError as exc:
+        raise MappingError("--reaction-atoms must be comma-separated integers") from exc
+    if not atoms:
+        raise MappingError("--reaction-atoms cannot be empty in local Mapper mode")
+    return atoms
 
 
 def run_mapping(
@@ -134,6 +152,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-xtb", action="store_true", help="Skip xtb coordinate/CG generation.")
     p.add_argument("--no-files", action="store_true", help="Do not write .txt/.gro/.itp outputs (library mode).")
     p.add_argument("--dihedrals", action="store_true", help="Do not comment out the dihedrals in ITP file.")
+    p.add_argument(
+        "--local-mapper",
+        action="store_true",
+        help=(
+            "Map only reaction-containing old beads and keep every other old bead immutable. "
+            "Requires atom-mapped SMILES, --previous-mapping and --reaction-atoms."
+        ),
+    )
+    p.add_argument(
+        "--previous-mapping",
+        default=None,
+        help="JSON file containing the pre-reaction groups (list, groups, or pre_groups).",
+    )
+    p.add_argument(
+        "--reaction-atoms",
+        default=None,
+        help="Comma-separated persistent atom-map IDs changed by the reaction.",
+    )
+    p.add_argument(
+        "--local-context-layers",
+        type=int,
+        default=1,
+        help="Read-only whole-bead context layers around the editable beads (default: 1).",
+    )
+    p.add_argument(
+        "--local-output",
+        default=None,
+        help="Optional JSON output path for local Mapper mode; JSON is always printed to stdout.",
+    )
 
     p.add_argument(
         "--out-dir",
@@ -160,6 +207,32 @@ def main(argv=None) -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        if args.local_mapper:
+            if not args.previous_mapping or not args.reaction_atoms:
+                parser.error(
+                    "--local-mapper requires --previous-mapping and --reaction-atoms"
+                )
+            if args.local_context_layers < 0:
+                parser.error("--local-context-layers must be non-negative")
+            from .frozen_mapping import FrozenMappingError, run_local_mapping
+
+            try:
+                result = run_local_mapping(
+                    smiles,
+                    _load_previous_mapping(Path(args.previous_mapping)),
+                    _parse_reaction_atoms(args.reaction_atoms),
+                    context_layers=args.local_context_layers,
+                )
+            except FrozenMappingError as exc:
+                raise MappingError(str(exc)) from exc
+            rendered = json.dumps(result, ensure_ascii=False, indent=2)
+            print(rendered)
+            if args.local_output:
+                output_path = Path(args.local_output)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(rendered + "\n", encoding="utf-8")
+            return 0
+
         run_mapping(
             compound_name,
             smiles,

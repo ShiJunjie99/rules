@@ -148,11 +148,40 @@ Options:
 - `--keep-intermediates`  
   Do not delete intermediate xTB/MD files.
 
+- `--local-mapper`
+  Enable strict local mapping for a crosslink step. The SMILES must carry a
+  unique positive atom-map number on every atom. Beads containing a listed
+  reaction atom are editable; every other previous bead is copied unchanged.
+  Candidate groups are clipped at the frozen boundary, so one-atom beads are
+  allowed and frozen atoms never move.
+
+- `--previous-mapping PATH`
+  Pre-reaction JSON mapping used by `--local-mapper`. Accepted forms are a
+  group list or an object containing `groups` or `pre_groups`.
+
+- `--reaction-atoms IDS`
+  Comma-separated persistent atom-map IDs changed by the reaction.
+
+- `--local-context-layers N`
+  Number of neighboring whole-bead layers supplied as read-only context
+  (default: `1`). Context atoms may guide mapping but are never committed.
+
+- `--local-output PATH`
+  Optional JSON output path. Local mode always prints the same JSON to stdout.
+
 Examples:
 
 ```bash
 # Run without xTB and write no files (fast / test-friendly)
 python -m martini_mapper Benzene c1ccccc1 --no-xtb --no-files
+
+# Strict local mapping: only old beads containing atoms 30,31,89,90 may change
+python -m martini_mapper crosslink "[CH3:1][CH2:2]..." \
+  --local-mapper \
+  --previous-mapping previous_mapping.json \
+  --reaction-atoms 30,31,89,90 \
+  --local-output local_mapping.json \
+  --no-xtb --no-files
 
 # Put outputs in a specific folder
 python -m martini_mapper Benzene c1ccccc1 --out-dir outputs/Benzene
